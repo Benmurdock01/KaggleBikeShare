@@ -84,7 +84,6 @@ bike_recipe <- recipe(count ~ ., data = trainData) %>%
   step_mutate(season = factor(season, 
                               levels = c(1,2,3,4),
                               labels = c("spring","summer","fall","winter"))) %>% 
-  step_corr(all_numeric_predictors(), threshold = 0.5)
 prepped_recipe <- prep(bike_recipe)
 
 baked_train <- bake(prepped_recipe, new_data = trainData)
@@ -101,14 +100,17 @@ bike_workflow <- workflow() %>%
   add_model(bike.lm) %>%
   fit(data = trainData)
 
-# predictions + backtransform
+# Keep a raw copy for submission
+raw_test <- vroom("Git/KaggleBikeShare/test.csv")
+
+# Predictions + backtransform
 lin_preds <- predict(bike_workflow, new_data = testData) %>%
   mutate(count = pmax(0, round(expm1(.pred)))) %>%
-  bind_cols(testData %>% select(datetime))
+  bind_cols(raw_test %>% select(datetime)) %>%
+  select(datetime, count) %>%
+  mutate(datetime = format(as.POSIXct(datetime, tz = "UTC"), "%Y-%m-%d %H:%M:%S"))
 
-submission <- lin_preds %>%
-  select(datetime, count)
+write_csv(lin_preds, "submission.csv")
 
-vroom_write(x=submission, file = './LinearPreds2.csv', delim = ',')
 
 

@@ -1,0 +1,87 @@
+---
+title: "BikeShare"
+format: html
+---
+
+```{r}
+#Libraries
+library(tidyverse)
+library(ggplot2)
+library(tidymodels)
+library(vroom)
+library(dplyr)
+library(GGally)
+library(patchwork)
+library(glmnet)
+```
+
+```{r}
+#importing data
+trainData <- vroom("/Users/Ben/Library/Mobile Documents/com~apple~CloudDocs/BYU/STAT 348/Git/KaggleBikeShare/train.csv") %>%
+  select(-casual, -registered) %>% #getting ride of casual and registered count
+  mutate(count = log1p(count)) #log transformation on count response
+
+testData <- vroom('/Users/Ben/Library/Mobile Documents/com~apple~CloudDocs/BYU/STAT 348/Git/KaggleBikeShare/test.csv')
+```
+
+```{r}
+#wrangling recipe
+bike_recipe <- recipe(count ~ ., data = trainData) %>%
+  step_mutate(weather = ifelse(weather == 4, 3, weather)) %>%  #factoring weather
+  step_mutate(weather = factor(weather, levels = c(1,2,3))) %>% 
+  step_time(datetime, features = c("hour"),keep_original_cols = F) %>% #select hour
+  step_mutate(season = factor(season, 
+                              levels = c(1,2,3,4), #factoring season
+                              labels = c("spring","summer","fall","winter"))) %>% 
+  step_dummy(all_nominal_predictors()) %>% #make dummy variables
+  step_normalize(all_numeric_predictors()) # Make mean 0, sd=1
+
+
+prepped_recipe <- prep(bike_recipe)
+```
+
+```{r}
+#baking data
+baked_train <- bake(prepped_recipe, new_data = trainData)
+baked_test <- bake(prepped_recipe, new_data = testData)
+```
+
+```{r}
+#regression model
+bike.lm <- linear_reg() %>%
+  set_engine("lm") %>%
+  set_mode("regression")
+bike_workflow <- workflow() %>%
+  add_recipe(bike_recipe) %>%
+  add_model(bike.lm) %>%
+  fit(data = trainData)
+
+# Predictions + backtransform (non )
+lin_preds <- predict(bike_workflow, new_data = testData) %>%
+  mutate(count = pmax(0, round(expm1(.pred)))) %>%
+  bind_cols(testData %>% select(datetime)) %>%
+  select(datetime, count) %>%
+  mutate(datetime = format(as.POSIXct(datetime, tz = "UTC"), "%Y-%m-%d %H:%M:%S"))
+```
+
+```{r}
+#penalized regression model
+preg_model <- linear_reg(penalty=.001, mixture=1) %>%  #Set model and tuning
+  set_engine("glmnet") # Function to fit in R
+preg_wf <- workflow() %>%
+  add_recipe(bike_recipe) %>%
+  add_model(preg_model) %>%
+  fit(data=trainData)
+
+#predict and back transform
+penalized_pred <- predict(preg_wf, new_data=testData) %>%   
+  mutate(count = pmax(0, round(expm1(.pred)))) %>%
+  bind_cols(testData %>% select(datetime)) %>%
+  select(datetime, count) %>% 
+  mutate(datetime = format(as.POSIXct(datetime, tz = "UTC"), "%Y-%m-%d %H:%M:%S"))
+```
+
+```{r}
+#writing output for kaggle
+write_csv(penalized_pred, "submission.csv")
+```
