@@ -47,17 +47,61 @@ baked_test <- bake(prepped_recipe, new_data = testData)
 ```
 
 ```{r}
-#regression model
-bike.lm <- linear_reg() %>%
-  set_engine("lm") %>%
-  set_mode("regression")
-bike_workflow <- workflow() %>%
+#penalized regression model
+preg_model <- linear_reg(penalty=tune(), 
+                         mixture=tune()) %>%
+  set_engine("glmnet") 
+
+#workflow
+preg_wf <- workflow() %>%
   add_recipe(bike_recipe) %>%
-  add_model(bike.lm) %>%
+  add_model(preg_model)
+
+#grid of values to tune
+grid_of_tune_params <- grid_regular(penalty(),
+                                    mixture(),
+                                    levels = 5)
+
+#split data for cross-validation
+K <- 10
+folds <- vfold_cv(trainData, v = K, repeats = 1)
+```
+
+```{r}
+#run CV
+CV_results <- preg_wf %>% 
+  tune_grid(resamples = folds,
+            grid = grid_of_tune_params,
+            metrics = metric_set(rmse, mae))
+
+#plot results
+collect_metrics(CV_results) %>% 
+  filter(.metric == 'rmse') %>% 
+  ggplot(data=., aes(x=penalty, y=mean, color = factor(mixture))) +
+  geom_line()
+
+#find best funing param
+bestTune <- CV_results %>% 
+  select_best(metric='rmse')
+```
+
+```{r}
+#final wf
+final_wf <-
+  preg_wf %>% 
+  finalize_workflow(bestTune) %>% 
   fit(data = trainData)
 
-# Predictions + backtransform (non )
-lin_preds <- predict(bike_workflow, new_data = testData) %>%
+#predict and back transform
+# penalized_pred <- predict(preg_wf, new_data=testData) %>%   
+#   mutate(count = pmax(0, round(expm1(.pred)))) %>%
+#   bind_cols(testData %>% select(datetime)) %>%
+#   select(datetime, count) %>% 
+#   mutate(datetime = format(as.POSIXct(datetime, tz = "UTC"), "%Y-%m-%d %H:%M:%S"))
+
+#predict 
+submission <- final_wf %>% 
+  predict(new_data = testData) %>% 
   mutate(count = pmax(0, round(expm1(.pred)))) %>%
   bind_cols(testData %>% select(datetime)) %>%
   select(datetime, count) %>%
@@ -65,23 +109,6 @@ lin_preds <- predict(bike_workflow, new_data = testData) %>%
 ```
 
 ```{r}
-#penalized regression model
-preg_model <- linear_reg(penalty=.001, mixture=1) %>%  #Set model and tuning
-  set_engine("glmnet") # Function to fit in R
-preg_wf <- workflow() %>%
-  add_recipe(bike_recipe) %>%
-  add_model(preg_model) %>%
-  fit(data=trainData)
-
-#predict and back transform
-penalized_pred <- predict(preg_wf, new_data=testData) %>%   
-  mutate(count = pmax(0, round(expm1(.pred)))) %>%
-  bind_cols(testData %>% select(datetime)) %>%
-  select(datetime, count) %>% 
-  mutate(datetime = format(as.POSIXct(datetime, tz = "UTC"), "%Y-%m-%d %H:%M:%S"))
-```
-
-```{r}
 #writing output for kaggle
-write_csv(penalized_pred, "submission.csv")
+vroom_write(submission, "submission_cv_tuning.csv", delim = ',')
 ```
