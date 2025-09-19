@@ -57,6 +57,9 @@ preg_wf <- workflow() %>%
   add_recipe(bike_recipe) %>%
   add_model(preg_model)
 
+```
+
+```{r}
 #grid of values to tune
 grid_of_tune_params <- grid_regular(penalty(),
                                     mixture(),
@@ -91,13 +94,6 @@ final_wf <-
   preg_wf %>% 
   finalize_workflow(bestTune) %>% 
   fit(data = trainData)
-
-#predict and back transform
-# penalized_pred <- predict(preg_wf, new_data=testData) %>%   
-#   mutate(count = pmax(0, round(expm1(.pred)))) %>%
-#   bind_cols(testData %>% select(datetime)) %>%
-#   select(datetime, count) %>% 
-#   mutate(datetime = format(as.POSIXct(datetime, tz = "UTC"), "%Y-%m-%d %H:%M:%S"))
 
 #predict 
 submission <- final_wf %>% 
