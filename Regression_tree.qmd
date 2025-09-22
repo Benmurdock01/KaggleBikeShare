@@ -36,89 +36,63 @@ bike_recipe <- recipe(count ~ ., data = trainData) %>%
 ```
 
 ```{r}
-#models and workflow
+#regresion tree
+tree_model <- decision_tree(
+  cost_complexity = tune(),
+  tree_depth = tune(),
+  min_n = tune()
+) %>%
+  set_engine("rpart") %>%
+  set_mode("regression")
 
-#penalized regression with turning params
-preg_model <- linear_reg(penalty = tune(), mixture = tune()) %>%
-  set_engine("glmnet")
-
-#workflow to combine recipe and model
-preg_wf <- workflow() %>%
-  add_recipe(bike_recipe) %>%
-  add_model(preg_model)
+#workflow for the tree model
+tree_wf <- workflow() %>%
+  add_recipe(bike_recipe) %>% # Reuse the same recipe
+  add_model(tree_model)
 ```
 
 ```{r}
-#cv model
-folds <- vfold_cv(trainData, v = 10, repeats = 1)
+#grid of tuning values for the tree
+tree_grid <- grid_regular(cost_complexity(), tree_depth(), min_n(), levels = 4)
 
-#tuning params
-grid_of_tune_params <- grid_regular(penalty(), mixture(), levels = 5)
-
-CV_results <- preg_wf %>%
-  tune_grid(resamples = folds,
-            grid = grid_of_tune_params,
-            metrics = metric_set(rmse, mae))
+#cross-validation tuning for the tree model
+tree_CV_results <- tree_wf %>%
+  tune_grid(
+    resamples = folds, # Reuse the same folds
+    grid = tree_grid,
+    metrics = metric_set(rmse, mae)
+  )
 ```
 
 ```{r}
-#ploting rsme
-collect_metrics(CV_results) %>%
-  filter(.metric == 'rmse') %>%
-  ggplot(aes(x = penalty, y = mean, color = factor(mixture))) +
-  geom_line(linewidth = 1.5) +
-  labs(
-    title = "RMSE by Penalty and Mixture",
-    x = "Penalty (Lambda)",
-    y = "Mean RMSE",
-    color = "Mixture"
-  ) +
-  theme_minimal()
+# tuning parameters based on RMSE
+bestTreeTune <- tree_CV_results %>%
+  select_best(metric = "rmse")
+
+print(bestTreeTune)
 ```
 
 ```{r}
-#getting best tuning params
-bestTune <- CV_results %>%
-  select_best(metric = 'rmse')
+# final workflow with the best tree tuning parameters
+final_tree_wf <- tree_wf %>%
+  finalize_workflow(bestTreeTune)
 
-print(bestTune)
-```
+# Fit the final workflow on the training data
+final_tree_fit <- fit(final_tree_wf, data = trainData)
 
-```{r}
-#final workflow with bestTune params
-final_wf <- preg_wf %>%
-  finalize_workflow(bestTune)
+# predict on the test data
+tree_predictions <- predict(final_tree_fit, new_data = testData)
 
-#final workflow with entire training data
-final_model_fit <- fit(final_wf, data = trainData)
-
-# Predict on the new test data
-predictions <- predict(final_model_fit, new_data = testData)
-```
-
-```{r}
-#creating submission
-submission <- predictions %>%
-  mutate(.pred = pmax(0, round(expm1(.pred)))) %>% # Reverse the log transformation
+# submission file
+submission_tree <- tree_predictions %>%
+  mutate(.pred = pmax(0, round(expm1(.pred)))) %>%
   rename(count = .pred) %>%
   bind_cols(testData %>% select(datetime)) %>%
   select(datetime, count) %>%
   mutate(datetime = format(as.POSIXct(datetime, tz = "UTC"), "%Y-%m-%d %H:%M:%S"))
 
-#export file
-vroom::vroom_write(submission, "submission_cv.csv", delim = ',')
-```
-
-\
-
-\
-
-```{r}
-
-```
-
-```{r}
-
+# export submission file
+vroom::vroom_write(submission_tree, "submission_tree.csv", delim = ',')
 ```
 
 \
