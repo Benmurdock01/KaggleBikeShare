@@ -33,16 +33,16 @@ bike_recipe <- recipe(count ~ ., data = trainData) %>%
                               labels = c("spring", "summer", "fall", "winter"))) %>%
   step_dummy(all_nominal_predictors()) %>%
   step_normalize(all_numeric_predictors())
+
+bakedBike <- recipe(trainData)
 ```
 
 ```{r}
 #regresion tree
-tree_model <- decision_tree(
-  cost_complexity = tune(),
-  tree_depth = tune(),
-  min_n = tune()
-) %>%
-  set_engine("rpart") %>%
+tree_model <- rand_forest(mtry = tune(),
+                          min_n = tune(),
+                          trees = 500) %>%
+  set_engine("ranger") %>%
   set_mode("regression")
 
 #workflow for the tree model
@@ -53,7 +53,8 @@ tree_wf <- workflow() %>%
 
 ```{r}
 #grid of tuning values for the tree
-tree_grid <- grid_regular(cost_complexity(), tree_depth(), min_n(), levels = 4)
+tree_grid <- grid_regular(mtry(range=c(1,8)),
+                          levels=4)
 
 #cross-validation tuning for the tree model
 tree_CV_results <- tree_wf %>%
