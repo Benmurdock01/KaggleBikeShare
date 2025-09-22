@@ -47,19 +47,6 @@ baked_test <- bake(prepped_recipe, new_data = testData)
 ```
 
 ```{r}
-#penalized regression model
-preg_model <- linear_reg(penalty=tune(), 
-                         mixture=tune()) %>%
-  set_engine("glmnet") 
-
-#workflow
-preg_wf <- workflow() %>%
-  add_recipe(bike_recipe) %>%
-  add_model(preg_model)
-
-```
-
-```{r}
 #grid of values to tune
 grid_of_tune_params <- grid_regular(penalty(),
                                     mixture(),
@@ -71,21 +58,20 @@ folds <- vfold_cv(trainData, v = K, repeats = 1)
 ```
 
 ```{r}
-#run CV
-CV_results <- preg_wf %>% 
-  tune_grid(resamples = folds,
-            grid = grid_of_tune_params,
-            metrics = metric_set(rmse, mae))
+#regression tree model
 
-#plot results
-collect_metrics(CV_results) %>% 
-  filter(.metric == 'rmse') %>% 
-  ggplot(data=., aes(x=penalty, y=mean, color = factor(mixture))) +
-  geom_line()
+my_model <-decision_tree(tree_depth = tune(),
+                         cost_complexity = tune(),
+                         min_n = tune()) %>% 
+  set_engine('rpart') %>% 
+  set_mode('regression')
+```
 
-#find best funing param
-bestTune <- CV_results %>% 
-  select_best(metric='rmse')
+```{r}
+#regression tree workflow
+
+tree_wf <-
+  
 ```
 
 ```{r}
@@ -107,4 +93,34 @@ submission <- final_wf %>%
 ```{r}
 #writing output for kaggle
 vroom_write(submission, "submission_cv_tuning.csv", delim = ',')
+```
+
+```{r}
+#legacy code
+
+#penalized regression model
+preg_model <- linear_reg(penalty=tune(), 
+                         mixture=tune()) %>%
+  set_engine("glmnet") 
+
+#workflow
+preg_wf <- workflow() %>%
+  add_recipe(bike_recipe) %>%
+  add_model(preg_model)
+
+#run CV
+CV_results <- preg_wf %>% 
+  tune_grid(resamples = folds,
+            grid = grid_of_tune_params,
+            metrics = metric_set(rmse, mae))
+
+#plot results
+collect_metrics(CV_results) %>% 
+  filter(.metric == 'rmse') %>% 
+  ggplot(data=., aes(x=penalty, y=mean, color = factor(mixture))) +
+  geom_line()
+
+#find best funing param
+bestTune <- CV_results %>% 
+  select_best(metric='rmse')
 ```

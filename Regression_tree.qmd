@@ -1,0 +1,124 @@
+---
+title: "Regression_tree"
+format: html
+---
+
+```{r}
+library(tidyverse)
+library(tidymodels)
+library(vroom)
+library(ggplot2)
+```
+
+```{r}
+#loading data
+
+#training
+trainData <- vroom::vroom("./train.csv", show_col_types = FALSE) %>%
+  select(-casual, -registered) %>%
+  mutate(count = log1p(count))
+
+#test
+testData <- vroom::vroom("./test.csv", show_col_types = FALSE)
+```
+
+```{r}
+#building the recipe
+bike_recipe <- recipe(count ~ ., data = trainData) %>%
+  step_mutate(weather = ifelse(weather == 4, 3, weather)) %>%
+  step_mutate(weather = factor(weather, levels = c(1, 2, 3))) %>%
+  step_time(datetime, features = c("hour"), keep_original_cols = FALSE) %>%
+  step_mutate(season = factor(season,
+                              levels = c(1, 2, 3, 4),
+                              labels = c("spring", "summer", "fall", "winter"))) %>%
+  step_dummy(all_nominal_predictors()) %>%
+  step_normalize(all_numeric_predictors())
+```
+
+```{r}
+#models and workflow
+
+#penalized regression with turning params
+preg_model <- linear_reg(penalty = tune(), mixture = tune()) %>%
+  set_engine("glmnet")
+
+#workflow to combine recipe and model
+preg_wf <- workflow() %>%
+  add_recipe(bike_recipe) %>%
+  add_model(preg_model)
+```
+
+```{r}
+#cv model
+folds <- vfold_cv(trainData, v = 10, repeats = 1)
+
+#tuning params
+grid_of_tune_params <- grid_regular(penalty(), mixture(), levels = 5)
+
+CV_results <- preg_wf %>%
+  tune_grid(resamples = folds,
+            grid = grid_of_tune_params,
+            metrics = metric_set(rmse, mae))
+```
+
+```{r}
+#ploting rsme
+collect_metrics(CV_results) %>%
+  filter(.metric == 'rmse') %>%
+  ggplot(aes(x = penalty, y = mean, color = factor(mixture))) +
+  geom_line(linewidth = 1.5) +
+  labs(
+    title = "RMSE by Penalty and Mixture",
+    x = "Penalty (Lambda)",
+    y = "Mean RMSE",
+    color = "Mixture"
+  ) +
+  theme_minimal()
+```
+
+```{r}
+#getting best tuning params
+bestTune <- CV_results %>%
+  select_best(metric = 'rmse')
+
+print(bestTune)
+```
+
+```{r}
+#final workflow with bestTune params
+final_wf <- preg_wf %>%
+  finalize_workflow(bestTune)
+
+#final workflow with entire training data
+final_model_fit <- fit(final_wf, data = trainData)
+
+# Predict on the new test data
+predictions <- predict(final_model_fit, new_data = testData)
+```
+
+```{r}
+#creating submission
+submission <- predictions %>%
+  mutate(.pred = pmax(0, round(expm1(.pred)))) %>% # Reverse the log transformation
+  rename(count = .pred) %>%
+  bind_cols(testData %>% select(datetime)) %>%
+  select(datetime, count) %>%
+  mutate(datetime = format(as.POSIXct(datetime, tz = "UTC"), "%Y-%m-%d %H:%M:%S"))
+
+#export file
+vroom::vroom_write(submission, "submission_cv.csv", delim = ',')
+```
+
+\
+
+\
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+\
