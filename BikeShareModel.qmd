@@ -4,11 +4,13 @@ format: html
 ---
 
 ```{r}
-library(tidyverse)
-library(tidymodels)
 library(vroom)
 library(ggplot2)
 library(ranger)
+library(bonsai)
+library(lightgbm)
+library(tidyverse)
+library(tidymodels)
 ```
 
 ```{r}
@@ -39,60 +41,50 @@ bakedBike <- recipe(trainData)
 ```
 
 ```{r}
-#random forest
-rf_model <- rand_forest(mtry = tune(),
-                        min_n = tune(),
-                        trees = 500) %>%
-  set_engine("ranger") %>%
-  set_mode("regression")
+# bart
+bart_model <- bart(trees=tune()) %>% 
+  set_engine('dbarts') %>% 
+  set_mode('regression')
 
 #workflow for the forest model
-rf_wf <- workflow() %>%
+bart_wf <- workflow() %>%
   add_recipe(bike_recipe) %>% 
-  add_model(rf_model)
+  add_model(bart_model)
 
 #kfolds for cv
 folds <- vfold_cv(trainData, v = 10, repeats = 1) 
 ```
 
 ```{r}
-#grid of tuning values for the tree
-rf_grid <- grid_regular(
-  mtry(range = c(1, 8)),
-  min_n(range = c(2, 40)),
-  levels = 4
+#tree regression tuning
+tree_grid <- grid_regular(trees(), levels = 4)
+
+# Run the tuning process
+tune_results <- tune_grid(
+  object = bart_wf,
+  resamples = folds,
+  grid = tree_grid,
+  metrics = metric_set(rmse)
 )
-
-#cross-validation tuning for the tree model
-rf_CV_results <- rf_wf %>%
-  tune_grid(
-    resamples = folds,
-    grid = rf_grid,
-    metrics = metric_set(rmse, mae)
-  )
+show_best(tune_results, metric = "rmse")
 ```
 
 ```{r}
-# tuning parameters based on RMSE
-bestTune <- rf_CV_results %>%
-  select_best(metric = "rmse")
 
-print(bestTune)
-```
+bestTune <- select_best(tune_results, metric = "rmse")
 
-```{r}
 # final workflow with the best tree tuning parameters
-final_rf_wf <- rf_wf %>%
+final_wf <- bart_wf %>%
   finalize_workflow(bestTune)
 
 # Fit the final workflow on the training data
-final_rf_fit <- fit(final_rf_wf, data = trainData)
+final_fit <- fit(final_wf, data = trainData)
 
 # predict on the test data
-rf_predictions <- predict(final_rf_fit, new_data = testData)
+predictions <- predict(final_fit, new_data = testData)
 
 # submission file
-submission_rf <- rf_predictions %>%
+submission <- predictions %>%
   mutate(.pred = pmax(0, round(expm1(.pred)))) %>%
   rename(count = .pred) %>%
   bind_cols(testData %>% select(datetime)) %>%
@@ -100,7 +92,7 @@ submission_rf <- rf_predictions %>%
   mutate(datetime = format(as.POSIXct(datetime, tz = "UTC"), "%Y-%m-%d %H:%M:%S"))
 
 # export submission file
-vroom::vroom_write(submission_rf, "submission_rf.csv", delim = ',')
+vroom::vroom_write(submission, "submission_bart.csv", delim = ',')
 ```
 
 \
